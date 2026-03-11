@@ -1,11 +1,16 @@
+if not game.ReplicatedStorage:FindFirstChild("GameData") or game.ReplicatedStorage.GameData.Floor.Value ~= "Party" then
+	warn("this script can only be executed in battle mode")
+	return
+end
+
 local Players = game:GetService("Players")
 local tweenService = game:GetService("TweenService")
-
+local userInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
 
 player.PlayerGui:WaitForChild("MainUI"):WaitForChild("Initiator"):WaitForChild("Main_Game")
-task.wait(0.5)
+task.wait(0.1)
 
 local mainUI = player.PlayerGui.MainUI
 local main_game = require(mainUI.Initiator.Main_Game)
@@ -59,7 +64,7 @@ local function caption(text, ctype)
 					backgroundTransparency = 0.75
 					strokeTransparency = 0.7
 				end
-				sysmsg(text)
+				sysmsg("[\xF0\x9F\x9A\xAA]: ".. text)
 				livecapt.Parent = mainUI.CaptionHolder
 				game.Debris:AddItem(livecapt, 10)
 				mainUI.Initiator.Main_Game.Reminder.Caption:Play()
@@ -100,6 +105,17 @@ local ItemTranslations = {
 	StopSign = "A-90's Stop Sign",
 	RushMoving = "Rush",
 	AmbushMoving = "Ambush",
+	StarVial = "Vial of Starlight",
+	StarBottle = "Bottle of Starlight",
+}
+local autoPickupItems = {"Gold Blaster", "Moonlight Smoothie", "Bottle of Starlight", "Big Bomb", "Boxing Gloves", "Donut"}
+
+print("these items will be auto-picked up:", table.concat(autoPickupItems, ", "))
+
+local espConfig = {
+	Gold = {
+		Color = Color3.fromRGB(241, 226, 143)
+	}
 }
 
 local function translateItem(name)
@@ -109,6 +125,7 @@ end
 
 local function createBillboard(parent, color)
 	if not parent then return end
+	if parent:FindFirstChild("_PartyDebug") then return end
 
 	local billboard = Instance.new("BillboardGui")
 	billboard.Name = "_PartyDebug"
@@ -154,40 +171,48 @@ local function createESP(targetPart,text, color)
 end
 
 local function handleDrop(item)
-
 	if not item:IsA("Model") then return end
 
-	repeat task.wait(.1)
-	until item:GetAttribute("Pickup") or item:GetAttribute("GoldValue")
+	for i = 1, 10000 do
+		task.wait(.1)
+		if (item:GetAttribute("Pickup") or item:GetAttribute("GoldValue")) and item.PrimaryPart then
+			break
+		end
+	end
 
 	if not item.PrimaryPart then return end
 
 	local label
+	local color
 
 	if item:GetAttribute("Pickup") then
 		label = translateItem(item:GetAttribute("Pickup"))
-
 	elseif item:GetAttribute("GoldValue") then
 		label = item:GetAttribute("GoldValue").." Gold"
+		color = espConfig.Gold.Color
 	end
 
 	if label then
-		createESP(item.PrimaryPart,label)
+		if (table.find(autoPickupItems, label) or game.ReplicatedStorage.GameData.LatestRoom.Value == 0) and item:FindFirstChild("ModulePrompt") and not (((#player.Backpack:GetChildren()) + (player.Character:FindFirstAncestorOfClass("Tool") and 1)) >= 6) then
+			task.wait()
+			repeat
+				fireproximityprompt(item.ModulePrompt)
+				task.wait()
+			until item.Parent == nil
+		end
+		createESP(item.PrimaryPart,label,color)
 	end
 end
 
-for _,item in ipairs(workspace.Drops:GetChildren()) do
+for _, item in ipairs(workspace.Drops:GetChildren()) do
 	handleDrop(item)
 end
 
 workspace.Drops.ChildAdded:Connect(handleDrop)
 
 local function handleRoom(room)
-
 	if room:FindFirstChild("ItemPads") then
-
-		for _,pad in ipairs(room.ItemPads:GetChildren()) do
-
+		for _, pad in ipairs(room.ItemPads:GetChildren()) do
 			local pickupType = pad:GetAttribute("PickupType")
 			local color = pad.Pickups:WaitForChild(pickupType, 2)
 			local highlight = workspace.Drops.Highlight:Clone()
@@ -199,7 +224,6 @@ local function handleRoom(room)
 				highlight.FillColor = color.Color
 			end
 		end
-
 	end
 
 	for _, Stuff in ipairs(room:GetChildren()) do
@@ -219,11 +243,17 @@ local function handleRoom(room)
     end
 
 	if room:FindFirstChild("Door") and room.Door.PrimaryPart then
-		createESP(room.Door.PrimaryPart,"Room ".. (tonumber(room.Name) + 1), Color3.fromRGB(171, 128, 111))
+		local prefix = ""
+		local color = Color3.fromRGB(171, 128, 111)
+		if room:GetAttribute("Firedamp") then
+			prefix = "Firedamp "
+			color = Color3.fromRGB(252, 151, 108)
+		end
+		createESP(room.Door.PrimaryPart,prefix.."Room ".. (tonumber(room.Name) + 1), color)
 		local highlight = workspace.Drops.Highlight:Clone()
 		highlight.Parent = room.Door.Door
-		highlight.OutlineColor = Color3.fromRGB(171, 128, 111)
-		highlight.FillColor = Color3.fromRGB(171, 128, 111)
+		highlight.OutlineColor = color
+		highlight.FillColor = color
 	end
 end
 
@@ -237,7 +267,6 @@ workspace.CurrentRooms.ChildAdded:Connect(function(room)
 end)
 
 local function handleKey(key)
-
 	if key.Name ~= "KeyObtain" then return end
 
 	local hitbox = key:FindFirstChild("Hitbox")
@@ -251,6 +280,7 @@ end
 
 for _,desc in ipairs(workspace:GetDescendants()) do
 	if desc.Name == "KeyObtain" then
+		task.wait()
 		handleKey(desc)
 	end
 end
@@ -261,8 +291,8 @@ workspace.CurrentRooms.DescendantAdded:Connect(function(desc)
 		handleKey(desc)
 	end
 end)
-local function handleNannerPeel(obj)
 
+local function handleNannerPeel(obj)
 	if obj.Name ~= "NannerPeel" then return end
 
 	if obj:IsA("BasePart") then
@@ -295,6 +325,12 @@ local function doChildStuff(c)
 	if (c.Name == "RushMoving" or c.Name == "AmbushMoving") then
 		local msg = translateItem(c.Name) .. " has spawned, hide quickly!"
 		caption(msg, "warning")
+
+		local part = c.PrimaryPart or c:FindFirstChildWhichIsA("BasePart")
+
+		if part then
+			createESP(part, translateItem(c.Name), Color3.fromRGB(255, 0, 4))
+		end
 	end
 end
 
@@ -335,8 +371,19 @@ ScreechHook = hookfunction(require(mainUI.Initiator.Main_Game.RemoteListener.Mod
     return
 end)
 
+local bypassanticheat = false
+
 game:GetService("RunService").RenderStepped:Connect(function()
 	local char = player.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+
+	if root and char:GetAttribute("Stunned") then
+        root.AssemblyLinearVelocity = Vector3.zero
+    end
+
+	if bypassanticheat then
+		player.Character:PivotTo(player.Character:GetPivot() + workspace.CurrentCamera.CFrame.LookVector * Vector3.new(1, 0, 1) * -100)
+	end
 
 	for _, v in ipairs(workspace:GetChildren()) do
 		if (v.Name == "Eyes" or v.Name == "BackdoorLookman") then
@@ -351,4 +398,17 @@ game:GetService("RunService").RenderStepped:Connect(function()
 	end
 end)
 
-caption("integrated assist mode active... Noob", "warning")
+userInputService.InputBegan:Connect(function(input, processed)
+	if input.KeyCode == Enum.KeyCode.T and not processed then
+		warn("killing anti-cheat")
+		bypassanticheat = true
+	end
+end)
+
+userInputService.InputEnded:Connect(function(input, processed)
+	if input.KeyCode == Enum.KeyCode.T then
+		bypassanticheat = false
+	end
+end)
+
+caption("initiated integrated assist mode!", "warning")
