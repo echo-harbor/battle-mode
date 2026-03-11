@@ -31,7 +31,7 @@ local function caption(text, ctype)
 				end
 			end
 			if text ~= "" and (text ~= " " and text ~= nil) then
-				local livecapt = v_u_6.MainFrame.NewCaption:Clone()
+				local livecapt = mainUI.MainFrame.NewCaption:Clone()
 				livecapt.Name = "LiveCaption"
 				livecapt.Visible = true
 				livecapt.Text = text
@@ -62,8 +62,8 @@ local function caption(text, ctype)
 				sysmsg(text)
 				livecapt.Parent = mainUI.CaptionHolder
 				game.Debris:AddItem(livecapt, 10)
-				script.Caption:Play()
-				v_u_3:Create(livecapt, TweenInfo.new(0.05, Enum.EasingStyle.Cubic, Enum.EasingDirection.In), {
+				mainUI.Initiator.Main_Game.Reminder.Caption:Play()
+				tweenService:Create(livecapt, TweenInfo.new(0.05, Enum.EasingStyle.Cubic, Enum.EasingDirection.In), {
 					["BackgroundTransparency"] = backgroundTransparency,
 					["TextTransparency"] = 0,
 					["TextStrokeTransparency"] = strokeTransparency
@@ -261,14 +261,6 @@ workspace.CurrentRooms.DescendantAdded:Connect(function(desc)
 		handleKey(desc)
 	end
 end)
-
-workspace.ChildAdded:Connect(function(c)
-	if (c.Name == "RushMoving" or c.Name == "AmbushMoving") then
-		local msg = translateItem(c.Name) .. " has spawned!
-		main_game.caption(msg, "warning")
-	end
-end)
-
 local function handleNannerPeel(obj)
 
 	if obj.Name ~= "NannerPeel" then return end
@@ -301,7 +293,7 @@ local function doChildStuff(c)
 	end
 
 	if (c.Name == "RushMoving" or c.Name == "AmbushMoving") then
-		local msg = translateItem(c.Name) .. " has spawned, hide quickly!
+		local msg = translateItem(c.Name) .. " has spawned, hide quickly!"
 		caption(msg, "warning")
 	end
 end
@@ -334,11 +326,11 @@ namecall = hookmetamethod(game, "__namecall", newcclosure(function(v, ...)
     return namecall(v, ...)
 end))
 
-A90Hook = hookfunction(require(LocalPlayer.PlayerGui.MainUI.Initiator.Main_Game.RemoteListener.Modules.A90), function(...)
+A90Hook = hookfunction(require(mainUI.Initiator.Main_Game.RemoteListener.Modules.A90), function(...)
     game.ReplicatedStorage.RemotesFolder.A90:FireServer("didnt")
 	return
 end)
-ScreechHook = hookfunction(require(LocalPlayer.PlayerGui.MainUI.Initiator.Main_Game.RemoteListener.Modules.Screech), function(...)
+ScreechHook = hookfunction(require(mainUI.Initiator.Main_Game.RemoteListener.Modules.Screech), function(...)
 	game.ReplicatedStorage.RemotesFolder.Screech:FireServer(true)
     return
 end)
