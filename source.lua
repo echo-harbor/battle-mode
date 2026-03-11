@@ -1,5 +1,90 @@
 local Players = game:GetService("Players")
+local tweenService = game:GetService("TweenService")
+
+
 local player = Players.LocalPlayer
+
+player.PlayerGui:WaitForChild("MainUI"):WaitForChild("Initiator"):WaitForChild("Main_Game")
+task.wait(0.5)
+
+local mainUI = player.PlayerGui.MainUI
+local main_game = require(mainUI.Initiator.Main_Game)
+print("injected into main_game")
+
+local function sysmsg(msg, data)
+	game.TextChatService.TextChannels.RBXSystem:DisplaySystemMessage(msg, data)
+end
+
+local function caption(text, ctype)
+	local captype = ctype == true and "info" or ctype
+	local ctype_final = ctype == false and "warning" or ctype or "info"
+	if ctype_final ~= "thought" then
+		coroutine.wrap(function()
+			for _, stuff in mainUI.CaptionHolder:GetChildren() do
+				if stuff.Name == "LiveCaption" then
+					stuff.TextTransparency = stuff.TextTransparency + 0.25
+					stuff.TextStrokeTransparency = stuff.TextStrokeTransparency + 0.25
+					stuff.BackgroundTransparency = stuff.BackgroundTransparency + 0.075
+					if stuff.Text == text then
+						stuff:Destroy()
+					end
+				end
+			end
+			if text ~= "" and (text ~= " " and text ~= nil) then
+				local livecapt = v_u_6.MainFrame.NewCaption:Clone()
+				livecapt.Name = "LiveCaption"
+				livecapt.Visible = true
+				livecapt.Text = text
+				local backgroundTransparency = 1
+				local strokeTransparency = 0
+				livecapt.TextTransparency = 1
+				livecapt.TextStrokeTransparency = 1
+				livecapt.BackgroundTransparency = 1
+				livecapt.MaxVisibleGraphemes = 0
+				if ctype_final == "thought" then
+					livecapt.TextColor3 = Color3.fromRGB(229, 224, 218)
+					livecapt.FontFace = Font.new("rbxasset://fonts/families/Oswald.json", Enum.FontWeight.Light, Enum.FontStyle.Normal)
+					livecapt.LayoutOrder = livecapt.LayoutOrder + 5
+					strokeTransparency = 0.6
+				elseif ctype_final == "info" then
+					livecapt.TextColor3 = Color3.fromRGB(255, 222, 189)
+					livecapt.FontFace = Font.new("rbxasset://fonts/families/Oswald.json", Enum.FontWeight.Regular, Enum.FontStyle.Normal)
+					livecapt.LayoutOrder = livecapt.LayoutOrder + 5
+					strokeTransparency = 0.7
+				elseif ctype_final == "warning" then
+					livecapt.TextColor3 = Color3.fromRGB(225, 177, 138)
+					livecapt.FontFace = Font.new("rbxasset://fonts/families/Oswald.json", Enum.FontWeight.Regular, Enum.FontStyle.Normal)
+					livecapt.BackgroundColor3 = Color3.fromRGB(36, 28, 26)
+					livecapt.LayoutOrder = livecapt.LayoutOrder - 5
+					backgroundTransparency = 0.75
+					strokeTransparency = 0.7
+				end
+				sysmsg(text)
+				livecapt.Parent = mainUI.CaptionHolder
+				game.Debris:AddItem(livecapt, 10)
+				script.Caption:Play()
+				v_u_3:Create(livecapt, TweenInfo.new(0.05, Enum.EasingStyle.Cubic, Enum.EasingDirection.In), {
+					["BackgroundTransparency"] = backgroundTransparency,
+					["TextTransparency"] = 0,
+					["TextStrokeTransparency"] = strokeTransparency
+				}):Play()
+				local ti = TweenInfo.new(0.25, Enum.EasingStyle.Cubic, Enum.EasingDirection.In)
+				local tweenStuff = {}
+				local _text = text
+				tweenStuff.MaxVisibleGraphemes = string.len(_text)
+				tweenService:Create(livecapt, ti, tweenStuff):Play()
+				task.wait(8)
+				if livecapt then
+					tweenService:Create(livecapt, TweenInfo.new(1.5, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {
+						["BackgroundTransparency"] = 1,
+						["TextTransparency"] = 1,
+						["TextStrokeTransparency"] = 1
+					}):Play()
+				end
+			end
+		end)()
+	end
+end
 
 workspace.Drops.Highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 
@@ -12,7 +97,9 @@ local ItemTranslations = {
 	SpeedBoost = "Speed Boost",
 	SkeletonKey = "Skeleton Key",
 	GweenSoda = "Gween Soda",
-	StopSign = "A-90's Stop Sign"
+	StopSign = "A-90's Stop Sign",
+	RushMoving = "Rush",
+	AmbushMoving = "Ambush",
 }
 
 local function translateItem(name)
@@ -132,7 +219,7 @@ local function handleRoom(room)
     end
 
 	if room:FindFirstChild("Door") and room.Door.PrimaryPart then
-		createESP(room.Door.PrimaryPart,"Door", Color3.fromRGB(171, 128, 111))
+		createESP(room.Door.PrimaryPart,"Room ".. (tonumber(room.Name) + 1), Color3.fromRGB(171, 128, 111))
 		local highlight = workspace.Drops.Highlight:Clone()
 		highlight.Parent = room.Door.Door
 		highlight.OutlineColor = Color3.fromRGB(171, 128, 111)
@@ -168,10 +255,17 @@ for _,desc in ipairs(workspace:GetDescendants()) do
 	end
 end
 
-workspace.DescendantAdded:Connect(function(desc)
+workspace.CurrentRooms.DescendantAdded:Connect(function(desc)
 	if desc.Name == "KeyObtain" then
 		task.wait()
 		handleKey(desc)
+	end
+end)
+
+workspace.ChildAdded:Connect(function(c)
+	if (c.Name == "RushMoving" or c.Name == "AmbushMoving") then
+		local msg = translateItem(c.Name) .. " has spawned!
+		main_game.caption(msg, "warning")
 	end
 end)
 
@@ -200,18 +294,23 @@ local function handleNannerPeel(obj)
 	end
 end
 
-for _,v in ipairs(workspace:GetChildren()) do
-	if v.Name == "NannerPeel" then
-		handleNannerPeel(v)
+local function doChildStuff(c)
+	if c.Name == "NannerPeel" then
+		task.wait()
+		handleNannerPeel(c)
+	end
+
+	if (c.Name == "RushMoving" or c.Name == "AmbushMoving") then
+		local msg = translateItem(c.Name) .. " has spawned, hide quickly!
+		caption(msg, "warning")
 	end
 end
 
-workspace.ChildAdded:Connect(function(child)
-	if child.Name == "NannerPeel" then
-		task.wait()
-		handleNannerPeel(child)
-	end
-end)
+for _, children in ipairs(workspace:GetChildren()) do
+	doChildStuff(children)
+end
+
+workspace.ChildAdded:Connect(doChildStuff)
 
 local namecall
 namecall = hookmetamethod(game, "__namecall", newcclosure(function(v, ...)
@@ -258,6 +357,6 @@ game:GetService("RunService").RenderStepped:Connect(function()
 			end
 		end
 	end
-
-	char:SetAttribute("SpeedBoost", 10)
 end)
+
+caption("integrated assist mode active... Noob", "warning")
