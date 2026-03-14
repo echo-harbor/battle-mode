@@ -1,29 +1,38 @@
 if not game.ReplicatedStorage:FindFirstChild("GameData") or game.ReplicatedStorage.GameData.Floor.Value ~= "Party" then
-	warn("this script can only be executed in battle mode")
+	warn("This script can only be executed in battle mode")
 	return
 end
 
 local Players = game:GetService("Players")
 local tweenService = game:GetService("TweenService")
 local userInputService = game:GetService("UserInputService")
+local runService = game:GetService("RunService")
+local debris = game:GetService("Debris")
 
 local player = Players.LocalPlayer
 
+print("waiting for main_game...")
 player.PlayerGui:WaitForChild("MainUI"):WaitForChild("Initiator"):WaitForChild("Main_Game")
 task.wait(0.05)
 
 local mainUI = player.PlayerGui.MainUI
 local main_game = require(mainUI.Initiator.Main_Game)
-print("injected into main_game")
 
 if main_game._injectedPartyScript then
 	warn("script already ran")
 	return
 end
 main_game._injectedPartyScript = true
+print("Injected into main_game")
+
+local ambientColor = Color3.fromRGB(100, 100, 100)
+local captionSound = mainUI.Initiator.Main_Game.Reminder.Caption
+local captionHolder = mainUI.CaptionHolder
+local newCaptionTemplate = mainUI.MainFrame.NewCaption
+local rbxSystem = game.TextChatService.TextChannels.RBXSystem
 
 local function sysmsg(msg, data)
-	game.TextChatService.TextChannels.RBXSystem:DisplaySystemMessage(msg, data)
+	rbxSystem:DisplaySystemMessage(msg, data)
 end
 
 local function caption(text, ctype)
@@ -116,24 +125,62 @@ local ItemTranslations = {
 	StarBottle = "Bottle of Starlight",
 	StarShield = "Starlight Shield",
 }
-local autoPickupItems = {"Gold Blaster", "Moonlight Smoothie", "Bottle of Starlight", "Big Bomb", "Boxing Gloves", "Donut"}
-local autoHealItems = {"Smoothie", "Moonlight Smoothie", "Bottle of Starlight", "Donut", "Vial of Starlight", "Bread", "Cheese", "Nanner"}
-local trashItems = {"Flashlight"}
 
-print("these items will be auto-picked up:", table.concat(autoPickupItems, ", "))
-print("these items will be auto-used when medium hp:", table.concat(autoHealItems, ", "))
-print("these items are TRASH:", table.concat(trashItems, ", "))
+local autoPickupSet = {
+	["Gold Blaster"] = true,
+	["Moonlight Smoothie"] = true,
+	["Bottle of Starlight"] = true,
+	["Big Bomb"] = true,
+	["Boxing Gloves"] = true,
+	["Donut"] = true,
+}
+local autoHealSet = {
+	["Smoothie"] = true,
+	["Moonlight Smoothie"] = true,
+	["Bottle of Starlight"] = true,
+	["Donut"] = true,
+	["Vial of Starlight"] = true,
+	["Bread"] = true,
+	["Cheese"] = true,
+	["Nanner"] = true,
+}
+local trashSet = {
+	["Flashlight"] = true,
+	["Lockpick"] = true,
+	["SkeletonKey"] = true,
+	["TipJar"] = true,
+}
+
+local function pconcat(t, seperator)
+	local final = ""
+	
+	for name, _ in pairs(t) do
+		if final == "" then
+			final = name
+		else
+			final = final .. seperator .. name
+		end
+	end
+	
+	return final
+end
+
+print("Loading config...")
+print("these items will be auto-picked up:", pconcat(autoPickupSet, ", "))
+print("these items will be used automatically when low hp:", pconcat(autoHealSet, ", "))
+warn("these items are TRASH, :Destroy() NOW!:", pconcat(trashSet, ", "))
+
+print("waiting for character")
 
 local char = player.Character or player.CharacterAdded:Wait()
-local root = char and char:FindFirstChild("HumanoidRootPart")
+local root = char:FindFirstChild("HumanoidRootPart")
 
 local espConfig = {
-	Gold = {
-		Color = Color3.fromRGB(241, 226, 143)
-	}
+	Gold = { Color = Color3.fromRGB(241, 226, 143) }
 }
 
 local espStuff = {}
+local lookAwayStuff = {}
 
 local function translateItem(name)
 	if not name then return nil end
@@ -146,133 +193,161 @@ local function createBillboard(parent, color)
 
 	local billboard = Instance.new("BillboardGui")
 	billboard.Name = "_PartyDebug"
-	billboard.Size = UDim2.new(0,200,0,50)
+	billboard.Size = UDim2.new(0, 200, 0, 50)
 	billboard.AlwaysOnTop = true
 	billboard.MaxDistance = math.huge
 	billboard.Parent = parent
 
 	local label = Instance.new("TextLabel")
 	label.BackgroundTransparency = 1
-	label.Size = UDim2.new(1,0,1,0)
+	label.Size = UDim2.new(1, 0, 1, 0)
 	label.Font = Enum.Font.Oswald
 	label.TextColor3 = color or workspace.Drops.Highlight.OutlineColor
 	label.TextStrokeTransparency = 0
 	label.TextSize = 22
-	label.Parent = billboard
 	label.Text = "Loading..."
+	label.Parent = billboard
 
 	return label
 end
 
 local function createESP(targetPart, text, color)
 	if not targetPart or not text then return end
-
 	local label = createBillboard(targetPart, color)
 	if not label then return end
+	table.insert(espStuff, { Target = targetPart, Label = label, Text = text })
+end
 
-	table.insert(espStuff, {Target = targetPart, Label = label, Text = text})
+local function tryAutoPickup(item, label)
+	task.spawn(function()
+		local prompt = item:FindFirstChildOfClass("ProximityPrompt")
+		if not prompt then return end
+
+		while item.Parent ~= nil do
+			if player.Backpack:FindFirstChild(item.Name) or char:FindFirstChild(item.Name) then
+				break
+			end
+			fireproximityprompt(prompt)
+			task.wait(0.2)
+		end
+	end)
 end
 
 local function handleDrop(item)
 	if not item:IsA("Model") then return end
 
-	for i = 1, 10000 do
-		task.wait(.1)
-		if (item:GetAttribute("Pickup") or item:GetAttribute("GoldValue")) and item.PrimaryPart then
-			break
-		end
+	local waited = 0
+	while not ((item:GetAttribute("Pickup") or item:GetAttribute("GoldValue")) and item.PrimaryPart) do
+		task.wait(0.1)
+		waited += 0.1
+		if waited >= 10 then return end
 	end
 
 	if not item.PrimaryPart then return end
 
-	local label
-	local color
+	local label, color
 
 	if item:GetAttribute("Pickup") then
 		label = translateItem(item:GetAttribute("Pickup"))
 	elseif item:GetAttribute("GoldValue") then
-		label = item:GetAttribute("GoldValue").." Gold"
+		label = item:GetAttribute("GoldValue") .. " Gold"
 		color = espConfig.Gold.Color
 	end
 
-	if item:GetAttribute("Pickup") and table.find(trashItems, label) then
-		warn("TRASH ITEM", label, "DELETE NOW!!")
+	if not label then return end
+
+	if item:GetAttribute("Pickup") and trashSet[label] then
 		item:Destroy()
 		return
 	end
 
-	if label then
-		if (not (item:GetAttribute("PlayerName") == player.Name)) and (item:GetAttribute("GoldValue") or (game.ReplicatedStorage.GameData.LatestRoom.Value <= 2) or (((#player.Backpack:GetChildren() + (player.Character:FindFirstChildOfClass("Tool") and 1 or 0)) < 6) or (item:GetAttribute("CanStack") and not item:GetAttribute("CanOwnMultiple"))) and item:FindFirstChildOfClass("ProximityPrompt") and table.find(autoPickupItems, label) and (not (player.Backpack:FindFirstChild(item.Name) or player.Character:FindFirstChild(item.Name)) or item:GetAttribute("CanStack")) and not item:GetAttribute("CanOwnMultiple")) then
-			task.spawn(function()
-				task.wait()
-				for i=1,1000000 do
-					if item.Parent == nil then
-						break
-					end
-					fireproximityprompt(item:FindFirstChildOfClass("ProximityPrompt"))
-					task.wait(.03)
-				end
-			end)
-		end
-		createESP(item.PrimaryPart,label,color)
+	local isOwnedByUs = item:GetAttribute("PlayerName") == player.Name
+	local backpackCount = #player.Backpack:GetChildren() + (char:FindFirstChildOfClass("Tool") and 1 or 0)
+	local canStack = item:GetAttribute("CanStack")
+	local canOwnMultiple = item:GetAttribute("CanOwnMultiple")
+	local alreadyHave = player.Backpack:FindFirstChild(item.Name) or char:FindFirstChild(item.Name)
+	local hasPrompt = item:FindFirstChildOfClass("ProximityPrompt")
+
+	local shouldPickup = not isOwnedByUs
+		and autoPickupSet[label]
+		and hasPrompt
+		and not canOwnMultiple
+		and (canStack or not alreadyHave)
+		and (item:GetAttribute("GoldValue") or game.ReplicatedStorage.GameData.LatestRoom.Value <= 2 or backpackCount < 6 or canStack)
+
+	if shouldPickup then
+		tryAutoPickup(item, label)
 	end
+
+	createESP(item.PrimaryPart, label, color)
 end
 
+local dropsHighlight = workspace.Drops.Highlight
+
 local function handleRoom(room)
+	room:WaitForChild("Door", 9999)
+	room:WaitForChild("ItemPads", 1)
+
 	if room:FindFirstChild("ItemPads") then
 		for _, pad in ipairs(room.ItemPads:GetChildren()) do
 			local pickupType = pad:GetAttribute("PickupType")
 			local color = pad.Pickups:WaitForChild(pickupType, 2)
-			local highlight = workspace.Drops.Highlight:Clone()
 
 			if pickupType and pad.PrimaryPart and color then
-				createESP(pad.PrimaryPart,translateItem(pickupType), color.Color)
-				highlight.Parent = pad
+				createESP(pad.PrimaryPart, translateItem(pickupType), color.Color)
+				local highlight = dropsHighlight:Clone()
 				highlight.OutlineColor = color.Color
 				highlight.FillColor = color.Color
-				if pad:FindFirstChild("Hitbox") then
-					firetouchinterest(pad.Hitbox, game.Players.LocalPlayer.Character.HumanoidRootPart, 0)
+				highlight.Parent = pad
+
+				local hitbox = pad:FindFirstChild("Hitbox")
+				if hitbox then
+					local hrp = char.HumanoidRootPart
+					firetouchinterest(hitbox, hrp, 0)
 					task.wait()
-					firetouchinterest(pad.Hitbox, game.Players.LocalPlayer.Character.HumanoidRootPart, 1)
+					firetouchinterest(hitbox, hrp, 1)
 				end
 			end
 		end
 	end
 
 	for _, Stuff in ipairs(room:GetDescendants()) do
-        if Stuff:IsA("Model") then
+		if Stuff:IsA("Model") then
 			if Stuff.Name == "GiggleCeiling" or Stuff.Name == "Snare" then
-            	Stuff:WaitForChild("Hitbox", 9999999)
-            	Stuff.Hitbox.CanTouch = false
+				local hitbox = Stuff:WaitForChild("Hitbox", 10)
+				if hitbox then hitbox.CanTouch = false end
 			end
 			if Stuff.Name == "DoorFake" then
-				Stuff.Hidden.CanTouch = false
-
+				if Stuff:FindFirstChild("Hidden") then
+					Stuff.Hidden.CanTouch = false
+				end
 				if Stuff:FindFirstChild("LockPart") and Stuff.LockPart:FindFirstChild("UnlockPrompt") then
 					Stuff.LockPart.UnlockPrompt.Enabled = false
 				end
 			end
-        end
-    end
+		end
+	end
 
-	if room:FindFirstChild("Door") and room.Door.PrimaryPart then
+	local door = room:FindFirstChild("Door")
+	if door and door.PrimaryPart then
 		local prefix = ""
 		local color = Color3.fromRGB(171, 128, 111)
-		if room.Door:WaitForChild("FiredampSign", 1) then
+		if door:WaitForChild("FiredampSign", 1) then
 			prefix = "Firedamp "
 			color = Color3.fromRGB(252, 151, 108)
 		end
-		createESP(room.Door.PrimaryPart,prefix.."Room ".. (tonumber(room.Name) + 1), color)
-		local highlight = workspace.Drops.Highlight:Clone()
-		highlight.Parent = room.Door.Door
+		createESP(door.PrimaryPart, prefix .. "Room " .. (tonumber(room.Name) + 1), color)
+
+		local highlight = dropsHighlight:Clone()
 		highlight.OutlineColor = color
 		highlight.FillColor = color
+		highlight.Parent = door.Door
 
-		if room.Door:FindFirstChild("ClientBreakDoor") and room.Door.Door:FindFirstChildOfClass("ProximityPrompt") then
-			print("breakable door")
-			room.Door.Door:FindFirstChildOfClass("ProximityPrompt").Triggered:Once(function()
-				print("triggered")
-				room.Door:FindFirstChild("ClientBreakDoor"):FireServer()
+		local breakDoor = door:FindFirstChild("ClientBreakDoor")
+		local doorPrompt = door.Door:FindFirstChildOfClass("ProximityPrompt")
+		if breakDoor and doorPrompt then
+			doorPrompt.Triggered:Once(function()
+				breakDoor:FireServer()
 			end)
 		end
 	end
@@ -287,15 +362,15 @@ local function handleKey(key)
 	local handle = hitbox:FindFirstChild("Handle")
 	if not handle then return end
 
-	createESP(handle,"Key")
+	createESP(handle, "Key")
 
 	task.spawn(function()
-		for i=1,1000000 do
-			if key.Parent == nil then
-				break
-			end
-			fireproximityprompt(key:FindFirstChild("ModulePrompt", true))
-			task.wait(.03)
+		local prompt = key:FindFirstChild("ModulePrompt", true)
+		if not prompt then return end
+
+		while key.Parent ~= nil do
+			fireproximityprompt(prompt)
+			task.wait(0.2)
 		end
 	end)
 end
@@ -308,19 +383,13 @@ local function handleNannerPeel(obj)
 	end
 
 	local hitbox = obj:FindFirstChild("Hitbox")
-
 	if hitbox and hitbox:IsA("BasePart") then
 		hitbox.CanTouch = false
 	end
 
-	local targetPart = obj
-
-	if obj:IsA("Model") then
-		targetPart = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
-	end
-
+	local targetPart = obj:IsA("Model") and (obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")) or obj
 	if targetPart then
-		createESP(targetPart,"Nanner Peel")
+		createESP(targetPart, "Nanner Peel")
 	end
 end
 
@@ -328,73 +397,77 @@ local function doChildStuff(c)
 	if c.Name == "NannerPeel" then
 		task.wait()
 		handleNannerPeel(c)
-	end
+	elseif c.Name == "RushMoving" or c.Name == "AmbushMoving" or c.Name == "BackdoorRush" then
+		local translatedName = translateItem(c.Name)
+		caption(translatedName .. " has spawned, hide quickly!", "warning")
 
-	if (c.Name == "RushMoving" or c.Name == "AmbushMoving" or c.Name == "BackdoorRush") then
-    	local msg = translateItem(c.Name) .. " has spawned, hide quickly!"
-    	caption(msg, "warning")
+		local part = c.PrimaryPart or c:FindFirstChildWhichIsA("BasePart")
+		if part then
+			createESP(part, translatedName, Color3.fromRGB(255, 0, 4))
+		end
 
-    	local part = c.PrimaryPart or c:FindFirstChildWhichIsA("BasePart")
-
-    	if part then
-    	    createESP(part, translateItem(c.Name), Color3.fromRGB(255, 0, 4))
-   		end
-
-    	task.spawn(function()
-    	    while c.PrimaryPart do
-				print("i am rushing!")
-        	    if root and c.PrimaryPart.Parent ~= nil then
-					print("we are countering!")
-        	        local dist = (root.Position - c.PrimaryPart.Position).Magnitude
-      	          	if dist < 100 and not char:GetAttribute("Hiding") then
-                   	 	local crucifix = player.Backpack:FindFirstChild("Crucifix") or char:FindFirstChild("Crucifix")
-                   		local hidingBox = player.Backpack:FindFirstChild("SnakeBox") or char:FindFirstChild("SnakeBox")
-                    	if crucifix then
-                    	    char.Humanoid:EquipTool(crucifix)
-                    	elseif hidingBox then
-                    	    char.Humanoid:EquipTool(hidingBox)
-							if hidingBox:FindFirstChild("Remote") then
-								hidingBox.Remote:FireServer()
-							end
-                    	else
-                    	    print("ur Done. Lol")
-                    	end
-                    	break
-                	end
-            	end
-            	task.wait(0.1)
-        	end
-    	end)
+		task.spawn(function()
+			while c.PrimaryPart do
+				if root and c.PrimaryPart.Parent ~= nil then
+					local dist = (root.Position - c.PrimaryPart.Position).Magnitude
+					if dist < 100 and not char:GetAttribute("Hiding") then
+						local crucifix = player.Backpack:FindFirstChild("Crucifix") or char:FindFirstChild("Crucifix")
+						local hidingBox = player.Backpack:FindFirstChild("SnakeBox") or char:FindFirstChild("SnakeBox")
+						if crucifix then
+							char.Humanoid:EquipTool(crucifix)
+						elseif hidingBox then
+							char.Humanoid:EquipTool(hidingBox)
+							local remote = hidingBox:FindFirstChild("Remote")
+							if remote then remote:FireServer() end
+						end
+						break
+					end
+				end
+				task.wait(0.1)
+			end
+		end)
+	elseif c.Name == "Eyes" or c.Name == "BackdoorLookman" then
+		table.insert(lookAwayStuff, c)
 	end
 end
 
-print("did the functions!")
+print("initiating script")
+
+char:WaitForChild("HumanoidRootPart")
+local ogphysics = char.HumanoidRootPart.CustomPhysicalProperties
+local newphysics = PhysicalProperties.new(100, 0.7, 0, 100, 100)
+char.HumanoidRootPart.CustomPhysicalProperties = newphysics
+
+local collisionCloned = char:WaitForChild("CollisionPart"):Clone()
+collisionCloned.Parent = char
+collisionCloned.CollisionGroup = "Player"
+collisionCloned.CanCollide = false
+collisionCloned.CanQuery = false
+if not collisionCloned:FindFirstChild("Weld") then
+	local weld = Instance.new("Weld")
+	weld.C0 = CFrame.new(0, 0.056, 0)
+	weld.Part0 = collisionCloned
+	weld.Part1 = char.PrimaryPart
+end
 
 for _, item in ipairs(workspace.Drops:GetChildren()) do
 	handleDrop(item)
 end
-print("func part 0")
 workspace.Drops.ChildAdded:Connect(handleDrop)
 
-print("func part 1")
-
 for _, room in ipairs(workspace.CurrentRooms:GetChildren()) do
-	handleRoom(room)
+	task.spawn(handleRoom, room)
 end
 workspace.CurrentRooms.ChildAdded:Connect(function(room)
 	task.wait(0.5)
 	handleRoom(room)
 end)
 
-print("func part 2")
-
 for _, desc in ipairs(workspace:GetDescendants()) do
 	if desc.Name == "KeyObtain" then
-		task.wait()
-		handleKey(desc)
+		task.spawn(handleKey, desc)
 	end
 end
-
 workspace.CurrentRooms.DescendantAdded:Connect(function(desc)
 	if desc.Name == "KeyObtain" then
 		task.wait()
@@ -402,181 +475,176 @@ workspace.CurrentRooms.DescendantAdded:Connect(function(desc)
 	end
 end)
 
-for _, children in ipairs(workspace:GetChildren()) do
-	doChildStuff(children)
+for _, child in ipairs(workspace:GetChildren()) do
+	doChildStuff(child)
 end
-
 workspace.ChildAdded:Connect(doChildStuff)
 
-print("did the stuff!")
-
 local namecall
-namecall = hookmetamethod(game, "__namecall", newcclosure(function(v, ...)
-    local method = getnamecallmethod()
-    local args = {...}
+namecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+	local method = getnamecallmethod()
+	local args = { ... }
 
 	if method == "FireServer" then
-		if v.Name == "Underwater" then
-           args[1] = false
-        elseif v.Name == "Screech" then
-            local Tool = player.Character:FindFirstChildWhichIsA("Tool")
-            args[1] = not (Tool and Tool.Name == "Crucifix") ~= nil
-        elseif v.Name == "A90" then
-           	args[1] = "didnt"
-        elseif v.Name == "ShadeResult" then
-            return
-        end
-        return namecall(v, unpack(args))
-    end
+		local remote = self.Name
+		if remote == "Underwater" then
+			args[1] = false
+		elseif remote == "Screech" then
+			return
+		elseif remote == "A90" then
+			args[1] = "didnt"
+		elseif remote == "ShadeResult" then
+			return
+		end
+		return namecall(self, unpack(args))
+	end
 
-    return namecall(v, ...)
+	return namecall(self, ...)
 end))
 
 A90Hook = hookfunction(require(mainUI.Initiator.Main_Game.RemoteListener.Modules.A90), function(...)
-    game.ReplicatedStorage.RemotesFolder.A90:FireServer("didnt")
-	return
+	game.ReplicatedStorage.RemotesFolder.A90:FireServer("didnt")
 end)
 ScreechHook = hookfunction(require(mainUI.Initiator.Main_Game.RemoteListener.Modules.Screech), function(...)
-	game.ReplicatedStorage.RemotesFolder.Screech:FireServer(true)
-    return
+	return
 end)
 
-print("attached hooks")
-
-local bypassanticheat = false
 local backpackdebounce = false
 
 local function doBackpackStuff(c)
-	if backpackdebounce then return end
-	if c:IsA("Tool") then
-		if player.Character.Humanoid.Health <= 150 then
-			print("IS ITEM AUTO HEAL?", table.find(autoHealItems, (translateItem(c.Name))) ~= nil)
-			if table.find(autoHealItems, (translateItem(c.Name))) then
-				print("HAS REMOTE?", c:FindFirstChild("Remote") ~= nil)
-				if c:FindFirstChild("Remote") then
-					backpackdebounce = true
-					task.delay(2, function()
-						backpackdebounce = false
-					end)
-					if c.Parent ~= player.Character then
-						player.Character.Humanoid:EquipTool(c)
-					end
-					c:FindFirstChild("Remote"):FireServer()
-				end
-			end
-		end
-	end
-end
+	if backpackdebounce or not c:IsA("Tool") then return end
+	if player.Character.Humanoid.Health > 150 then return end
 
-print("doing backpack")
+	local translated = translateItem(c.Name)
+	if not autoHealSet[translated] then return end
+
+	local remote = c:FindFirstChild("Remote")
+	if not remote then return end
+
+	backpackdebounce = true
+	task.delay(2, function() backpackdebounce = false end)
+
+	if c.Parent ~= player.Character then
+		player.Character.Humanoid:EquipTool(c)
+	end
+	remote:FireServer()
+end
 
 char.ChildAdded:Connect(doBackpackStuff)
 player.Backpack.ChildAdded:Connect(doBackpackStuff)
 
 char:GetAttributeChangedSignal("Stunned"):Connect(function()
 	if root then
-        root.AssemblyLinearVelocity = char:GetAttribute("Stunned") and root.CFrame.LookVector * 99999 or Vector3.zero
-    end
-end)
-
-print("doing rendersteped")
-
-task.spawn(function()
-	while true do
-		task.wait(.5)
-		for _, v in ipairs(workspace:GetChildren()) do
-			if (v.Name == "Eyes" or v.Name == "BackdoorLookman") then
-				local core = v:FindFirstChild("Core")
-				local ambience = core and core:FindFirstChild("Ambience")
-
-				if ambience and ambience.Playing and not char:GetAttribute("Hiding") then
-					game.ReplicatedStorage.RemotesFolder.MotorReplication:FireServer(-650)
-					break
-				end
-			end
-		end
+		root.AssemblyLinearVelocity = char:GetAttribute("Stunned") and (root.CFrame.LookVector * 99999) or Vector3.zero
 	end
 end)
 
 task.spawn(function()
 	while true do
-		task.wait(.05)
+		task.wait()
+		if char:GetAttribute("ScreechOn") then continue end
+		local shouldFire = false
+		if not char:GetAttribute("Hiding") then
+			for _, v in ipairs(lookAwayStuff) do
+				local core = v:FindFirstChild("Core")
+				local ambience = core and core:FindFirstChild("Ambience")
+				if ambience and ambience.Playing then
+					shouldFire = true
+					break
+				end
+			end
+		end
+		if shouldFire then
+			game.ReplicatedStorage.RemotesFolder.MotorReplication:FireServer(-650)
+		end
+	end
+end)
+
+task.spawn(function()
+	while player:GetAttribute("Alive") do
+		task.wait(1/20)
+		collisionCloned.Massless = not collisionCloned.Massless
 
 		for i = #espStuff, 1, -1 do
-    		local stuff = espStuff[i]
-    		if not stuff.Target.Parent or not stuff.Label.Parent then
-    		    table.remove(espStuff, i)
-   			end
+			local stuff = espStuff[i]
+			if not stuff.Target.Parent or not stuff.Label.Parent then
+				table.remove(espStuff, i)
+			end
 		end
 
-		for _, stuff in ipairs(espStuff) do
-			local targetPart = stuff.Target
-			local label = stuff.Label
-			local text = stuff.Text
+		if not root then continue end
+		local rootPos = root.Position
 
-			if targetPart.Parent ~= nil then
-				if root then
-					local dist = (root.Position - targetPart.Position).Magnitude
-					label.Text = text.." ["..math.floor(dist).."m]"
-				else
-					label.Text = ""
-				end
+		for _, stuff in ipairs(espStuff) do
+			if stuff.Target.Parent then
+				local dist = (rootPos - stuff.Target.Position).Magnitude
+				stuff.Label.Text = stuff.Text .. " [" .. math.floor(dist) .. "m]"
 			end
 		end
 	end
 end)
 
 game.ReplicatedStorage.GameData.LatestRoom:GetPropertyChangedSignal("Value"):Connect(function()
-    task.wait(1)
-    for i = #espStuff, 1, -1 do
-        local stuff = espStuff[i]
-        local target = stuff.Target
-        if target and target.Parent then
-            local rayParams = RaycastParams.new()
-            rayParams.CollisionGroup = "BaseCheck"
-            local result = workspace:Raycast(target.Position, Vector3.new(0, -300, 0), rayParams)
-            if not result then
-                table.remove(espStuff, i)
-                local billboard = target:FindFirstChild("_PartyDebug")
-                if billboard then
-                    billboard:Destroy()
-                end
-            end
-        end
-    end
+	task.wait(1)
+	local rayParams = RaycastParams.new()
+	rayParams.CollisionGroup = "BaseCheck"
+
+	for i = #espStuff, 1, -1 do
+		local stuff = espStuff[i]
+		local target = stuff.Target
+		if target and target.Parent then
+			local result = workspace:Raycast(target.Position, Vector3.new(0, -300, 0), rayParams)
+			if not result then
+				table.remove(espStuff, i)
+				local billboard = target:FindFirstChild("_PartyDebug")
+				if billboard then billboard:Destroy() end
+			end
+		end
+	end
 end)
 
 local function removeFog(fog)
-	if fog:IsA("Atmosphere") then
-		fog:Destroy()
-	end
+	if fog:IsA("Atmosphere") then fog:Destroy() end
 end
-
 game.Lighting.ChildAdded:Connect(removeFog)
 for _, fog in ipairs(game.Lighting:GetChildren()) do
 	removeFog(fog)
 end
 
-game:GetService("RunService").RenderStepped:Connect(function()
+local bypassanticheat = false
+
+runService.RenderStepped:Connect(function()
 	if bypassanticheat then
-		player.Character:PivotTo(player.Character:GetPivot() + workspace.CurrentCamera.CFrame.LookVector * Vector3.new(1, 0, 1) * -100)
+		player.Character:PivotTo(
+			player.Character:GetPivot()
+				+ workspace.CurrentCamera.CFrame.LookVector * Vector3.new(1, 0, 1) * -100
+		)
 	end
-
-	game.Lighting.Ambient = Color3.fromRGB(100,100,100)
+	game.Lighting.Ambient = ambientColor
 end)
-
-print("doing userinput")
 
 userInputService.InputBegan:Connect(function(input, processed)
 	if input.KeyCode == Enum.KeyCode.T and not processed then
-		warn("killing anti-cheat")
 		bypassanticheat = true
 	end
 end)
-
 userInputService.InputEnded:Connect(function(input, processed)
 	if input.KeyCode == Enum.KeyCode.T then
 		bypassanticheat = false
+	end
+end)
+
+task.spawn(function()
+	while true do
+		task.wait()
+		--char:SetAttribute("ScreechOn", true)
+		char:SetAttribute("SpeedBoostExtra", 20)
+		if char:GetAttribute("Sliding") then
+			char:SetAttribute("SpeedBoostExtra", 50)
+			--char.HumanoidRootPart.CustomPhysicalProperties = ogphysics
+		else
+			char.HumanoidRootPart.CustomPhysicalProperties = newphysics
+		end
 	end
 end)
 
