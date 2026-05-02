@@ -648,4 +648,6 @@ task.spawn(function()
 	end
 end)
 
-caption("initiated integrated assist mode!", "warning")
+local exec, execver = identifyexecutor()
+local ver = "1.0"
+caption(("initiated script version %s! using %s version %s"):format(ver, exec, execver), "warning")
